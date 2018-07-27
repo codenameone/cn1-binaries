@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<project basedir="." name="cn1-binaries" default="default">
+    <target name="update-javafx" description="Download and update javafx libs">
+        <property name="javafx.mac.url" value="https://download.java.net/java/early_access/openjfx11/20/binaries/openjfx-11-ea+20_osx-x64_bin-sdk.zip"/>
+        <property name="javafx.linux.url" value="https://download.java.net/java/early_access/openjfx11/20/binaries/openjfx-11-ea+20_linux-x64_bin-sdk.zip"/>
+        <property name="javafx.win.url" value="https://download.java.net/java/early_access/openjfx11/20/binaries/openjfx-11-ea+20_windows-x64_bin-sdk.zip"/>
+        <get src="${javafx.win.url}" dest="javafx-win.zip"/>
+        <get src="${javafx.mac.url}" dest="javafx-mac.zip"/>
+        <get src="${javafx.linux.url}" dest="javafx-linux.zip"/>
+        <delete dir="javafx"/>
+        <unzip src="javafx-win.zip" dest="javafx"/>
+        <move file="javafx/javafx-sdk-11/legal" todir="javafx"/>
+        <move file="javafx/javafx-sdk-11/lib" todir="javafx"/>
+        <delete dir="javafx/javafx-sdk-11"/>
+        <delete>
+            <fileset dir="javafx/lib" excludes="*.jar"/>
+        </delete>
+        
+        
+    </target>
+</project>
