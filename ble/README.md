@@ -1,65 +1,59 @@
-# cn1-ble-helper binaries
+# libcn1ble shared libraries
 
-Prebuilt `cn1-ble-helper` executables for the Codename One JavaSE port's
+Prebuilt `libcn1ble` shared libraries for the Codename One JavaSE port's
 **native Bluetooth backend**. The simulator ships two interchangeable
-backends: a scriptable virtual stack (the default) and this helper, which
+backends: a scriptable virtual stack (the default) and this library, which
 talks to the host machine's real Bluetooth radio so the simulator can scan
 and connect to actual devices.
 
-The helper is a small Rust program built on
+The library is a small Rust `cdylib` built on
 [btleplug](https://github.com/deviceplug/btleplug) (CoreBluetooth on macOS,
-BlueZ/D-Bus on Linux, WinRT on Windows). It speaks line-delimited JSON over
-stdin/stdout; the protocol is documented in `PROTOCOL.md` next to the
-source.
+BlueZ/D-Bus on Linux, WinRT on Windows). It is loaded in-process and exposes
+a JNI ABI (`JniBleBridge`) for the JavaSE port and a C ABI for ParparVM; the
+event protocol is documented in `PROTOCOL.md` next to the source. It replaces
+the earlier `cn1-ble-helper` stdin/stdout subprocess executables.
 
 ## Layout
 
 | Path | Host | Built as |
 |---|---|---|
-| `ble/macos/cn1-ble-helper` | macOS `x86_64` **and** `arm64` | native builds joined with `lipo` |
-| `ble/linux/x64/cn1-ble-helper` | Linux `x86_64`, glibc 2.36+ | `rust:1-bookworm` container |
-| `ble/linux/arm64/cn1-ble-helper` | Linux `aarch64`, glibc 2.36+ | `rust:1-bookworm` container |
-| `ble/windows/x64/cn1-ble-helper.exe` | Windows `x86_64` | cross-compiled, `x86_64-pc-windows-msvc` |
-| `ble/windows/arm64/cn1-ble-helper.exe` | Windows `arm64` | cross-compiled, `aarch64-pc-windows-msvc` |
+| `ble/macos/libcn1ble.dylib` | macOS `x86_64` **and** `arm64` | native builds joined with `lipo` |
+| `ble/linux/x64/libcn1ble.so` | Linux `x86_64`, glibc 2.36+ | `rust:1-bookworm` container |
+| `ble/linux/arm64/libcn1ble.so` | Linux `aarch64`, glibc 2.36+ | `rust:1-bookworm` container |
+| `ble/windows/x64/cn1ble.dll` | Windows `x86_64` | cross-compiled, `x86_64-pc-windows-gnu` |
+| `ble/windows/arm64/cn1ble.dll` | Windows `arm64` | cross-compiled, `aarch64-pc-windows-gnullvm` |
 
-macOS gets a single universal Mach-O binary because the format supports it;
+macOS gets a single universal Mach-O library because the format supports it;
 ELF and PE have no fat-binary equivalent, so Linux and Windows ship one
-binary per architecture and `NativeBleBackend.helperResourcePath()` resolves
-`os.arch` (`amd64`/`x86_64` → `x64`, `aarch64`/`arm64` → `arm64`) into the
-directory name. Architectures with no bundled binary — 32-bit x86, 32-bit
-ARM — fall through to the `PATH` lookup, so a self-built helper still works
-there.
+library per architecture and `BleLibraryResolver.libraryResourcePath()`
+resolves `os.arch` (`amd64`/`x86_64` → `x64`, `aarch64`/`arm64` → `arm64`)
+into the directory name. Architectures with no bundled library — 32-bit x86,
+32-bit ARM — report the native backend as unavailable and fall back to the
+virtual stack.
 
-The Windows binaries link the CRT statically and the Linux ones need only
-`libdbus-1.so.3` (present wherever BlueZ is), so none of them require a
-redistributable.
+The Linux libraries need only `libdbus-1.so.3` (present wherever BlueZ is),
+so none of them require a redistributable.
 
 `maven/javase/pom.xml` maps this directory into the JavaSE jar at
 `com/codename1/impl/javase/bluetooth/native/`, where
-`NativeBleBackend.helperResourcePath()` loads it. The mapping is optional:
-a checkout without `ble/` still builds, and the native backend then simply
-reports itself unavailable (the simulator's virtual stack is unaffected).
+`BleLibraryResolver` extracts and `System.load()`s it. The mapping is
+optional: a checkout without `ble/` still builds, and the native backend
+then simply reports itself unavailable (the simulator's virtual stack is
+unaffected).
 
-At runtime users can override the binary with
-`-Dcn1.bluetooth.helperPath=<path>`; a `PATH` lookup is the last resort.
+At runtime users can override the library with
+`-Dcn1.bluetooth.libraryPath=<path>`.
 
 ## Source of truth
 
 The source lives in the CodenameOne repository at
-`Ports/JavaSE/native/cn1-ble-helper/` — these binaries are built from it and
+`Ports/JavaSE/native/cn1-ble-helper/` — these libraries are built from it and
 must be refreshed whenever it changes. `Cargo.lock` is committed there, so
 rebuilds are reproducible.
 
 ## Rebuilding
 
-Maintainers can build the helper for the current host without touching this
-repository:
-
-```bash
-cd maven && mvn package -pl javase -Pbuild-ble-helper
-```
-
-To refresh the binaries here:
+To refresh the libraries here:
 
 ```bash
 cd Ports/JavaSE/native/cn1-ble-helper
@@ -68,47 +62,43 @@ cd Ports/JavaSE/native/cn1-ble-helper
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo build --release --target aarch64-apple-darwin
 cargo build --release --target x86_64-apple-darwin
-lipo -create -output cn1-ble-helper \
-    target/aarch64-apple-darwin/release/cn1-ble-helper \
-    target/x86_64-apple-darwin/release/cn1-ble-helper
+lipo -create -output libcn1ble.dylib \
+    target/aarch64-apple-darwin/release/libcn1ble.dylib \
+    target/x86_64-apple-darwin/release/libcn1ble.dylib
 
 # Linux, per arch (glibc; needs the D-Bus headers for BlueZ).
 # --platform picks the arch; it is emulated unless it matches the host.
+# (docker or podman)
 for arch in amd64 arm64; do
   docker run --rm --platform linux/$arch -v "$PWD":/src -w /src rust:1-bookworm \
       bash -c "apt-get update && apt-get install -y pkg-config libdbus-1-dev && \
-               cargo build --release"
+               cargo build --release"   # -> target/release/libcn1ble.so
 done
 
-# Windows, per arch, cross-compiled with cargo-xwin (cargo install cargo-xwin).
-# crt-static keeps the exe free of a VCRUNTIME140.dll dependency, which is
-# NOT present on a clean Windows install.
-export RUSTFLAGS="-C target-feature=+crt-static"
-cargo xwin build --release --target x86_64-pc-windows-msvc
-cargo xwin build --release --target aarch64-pc-windows-msvc
-```
+# Windows x64, cross-compiled with the mingw-w64 GCC toolchain.
+rustup target add x86_64-pc-windows-gnu       # + brew install mingw-w64
+cargo build --release --target x86_64-pc-windows-gnu   # -> cn1ble.dll
 
-After building, confirm the Windows binaries import only system DLLs
-(`KERNEL32`, `ntdll`, `ole32`, `oleaut32`, `bcryptprimitives`,
-`api-ms-win-core-winrt-*`) and nothing like `VCRUNTIME140.dll`:
-
-```bash
-llvm-objdump -p cn1-ble-helper.exe | grep 'DLL Name' | sort -u
+# Windows arm64, cross-compiled with the llvm-mingw toolchain
+# (https://github.com/mstorsjo/llvm-mingw releases; put its bin/ on PATH so
+#  the aarch64-w64-mingw32-clang linker is found).
+rustup target add aarch64-pc-windows-gnullvm
+cargo build --release --target aarch64-pc-windows-gnullvm   # -> cn1ble.dll
 ```
 
 ## Validation status
 
-| Binary | Verified |
+| Library | Verified |
 |---|---|
-| macOS (universal) | Ran against a real radio: capabilities handshake, `poweredOn`, live scan results; both slices present per `lipo -info`. |
-| Linux x64 | Executed on `debian:bookworm-slim` (x86_64): emits the capabilities handshake, and without a D-Bus/BlueZ adapter reports "no usable adapter … unsupported" and exits cleanly, as designed. Not yet exercised against a real Linux radio. |
-| Linux arm64 | Same, executed on `debian:bookworm-slim` (aarch64). |
-| Windows x64 / arm64 | Verified as PE32+ console executables of the expected architecture, importing only system DLLs (WinRT among them) — but **not executed**, being cross-builds. Run them on real Windows hardware before relying on them. |
+| macOS (universal) | Built natively; both slices present per `lipo -info` (`x86_64 arm64`). |
+| Linux x64 | Built in `rust:1-bookworm` (x86_64 via emulation); ELF x86-64 shared object. |
+| Linux arm64 | Built in `rust:1-bookworm` (aarch64); ELF aarch64 shared object. |
+| Windows x64 | Cross-built with mingw-w64; PE32+ x86-64 DLL. Not executed. |
+| Windows arm64 | Cross-built with llvm-mingw; PE32+ Aarch64 DLL. Not executed. |
 
-A missing or broken helper degrades gracefully: the JavaSE port reports the
+A missing or broken library degrades gracefully: the JavaSE port reports the
 native backend as unavailable and the simulator's virtual Bluetooth stack
 keeps working.
 
-Keep the executable bit set on the Unix binaries (`chmod +x`); the Java side
-re-applies it after extracting to a temp file, but a correct mode here keeps
-direct use from a checkout working.
+Keep the executable bit set on the Unix libraries (`chmod +x`); the Java side
+loads them from a temp file after extraction.
